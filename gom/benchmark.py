@@ -85,6 +85,7 @@ def summarize_benchmark(rows: Sequence[dict], baseline_policy: str = "default") 
         nodes = [float(row.get("nodes", 0)) for row in selected]
         decisions = [float(row.get("gom_decisions", 0) or 0) for row in selected]
         fallbacks = [float(row.get("gom_fallbacks", 0) or 0) for row in selected]
+        abstentions = [float(row.get("gom_abstentions", 0) or 0) for row in selected]
         inference = [float(row.get("gom_inference_ms", 0.0) or 0.0) for row in selected]
         extract = [float(row.get("gom_extract_ms", 0.0) or 0.0) for row in selected]
         tensor = [float(row.get("gom_tensor_ms", 0.0) or 0.0) for row in selected]
@@ -101,6 +102,7 @@ def summarize_benchmark(rows: Sequence[dict], baseline_policy: str = "default") 
             "median_nodes": _metric(nodes, median),
             "mean_gom_decisions": _metric(decisions, mean),
             "mean_gom_fallbacks": _metric(fallbacks, mean),
+            "mean_gom_abstentions": _metric(abstentions, mean),
             "mean_gom_inference_ms": _metric(inference, mean),
             "gom_ms_per_decision": None if total_decisions <= 0 else sum(inference) / total_decisions,
             "gom_extract_ms_per_decision": None if total_decisions <= 0 else sum(extract) / total_decisions,
@@ -148,15 +150,16 @@ def render_markdown(summary: dict) -> str:
         "",
         "Lower gap/time/nodes is better. Pairwise wins use gap first, then wall time, then nodes.",
         "",
-        "| policy | runs | optimal | mean gap | median gap | mean time (s) | median nodes | GOM decisions | fallbacks | inference ms |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| policy | runs | optimal | mean gap | median gap | mean time (s) | median nodes | GOM decisions | fallbacks | abstentions | inference ms |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for policy, stats in summary["policies"].items():
         lines.append(
             f"| {policy} | {stats['runs']} | {stats['optimal']} | {_fmt(stats['mean_gap'], 6)} | "
             f"{_fmt(stats['median_gap'], 6)} | {_fmt(stats['mean_time_s'], 3)} | "
             f"{_fmt(stats['median_nodes'], 1)} | {_fmt(stats['mean_gom_decisions'], 1)} | "
-            f"{_fmt(stats['mean_gom_fallbacks'], 1)} | {_fmt(stats['mean_gom_inference_ms'], 2)} |"
+            f"{_fmt(stats['mean_gom_fallbacks'], 1)} | {_fmt(stats['mean_gom_abstentions'], 1)} | "
+            f"{_fmt(stats['mean_gom_inference_ms'], 2)} |"
         )
 
     latency_rows = [

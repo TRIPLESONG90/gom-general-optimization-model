@@ -101,6 +101,7 @@ def solve_with_gom_lp_branching(
     device: str | torch.device = "cpu",
     priority: int = 10_000_000,
     threads: int = 1,
+    min_confidence: float = 0.0,
 ) -> SCIPRunResult:
     """Solve a MILP while GOM chooses LP branch variables from SCIP's current LP graph.
 
@@ -110,6 +111,8 @@ def solve_with_gom_lp_branching(
     conversion, graph tensorization, and neural model scoring.
     """
     Branchrule, _, SCIP_RESULT, _ = _import_scip()
+    if not 0.0 <= min_confidence <= 1.0:
+        raise ValueError("min_confidence must be in [0, 1]")
     if str(device) == "cpu" and threads > 0:
         torch.set_num_threads(threads)
 
@@ -118,6 +121,7 @@ def solve_with_gom_lp_branching(
     stats = {
         "decisions": 0,
         "fallbacks": 0,
+        "abstentions": 0,
         "inference_ms": 0.0,
         "extract_ms": 0.0,
         "tensor_ms": 0.0,
@@ -187,7 +191,7 @@ def solve_with_gom_lp_branching(
                 )
                 extract_ms = (time.perf_counter() - extract_start) * 1000.0
 
-                chosen_id, _, tensor_ms, model_ms = _predict_lp_branch_variable_timed(
+                chosen_id, confidence, tensor_ms, model_ms = _predict_lp_branch_variable_timed(
                     gom,
                     snapshot,
                     problem_type=problem.problem_type,
@@ -198,6 +202,10 @@ def solve_with_gom_lp_branching(
                 stats["extract_ms"] += extract_ms
                 stats["tensor_ms"] += tensor_ms
                 stats["model_ms"] += model_ms
+
+                if confidence < min_confidence:
+                    stats["abstentions"] += 1
+                    return {"result": SCIP_RESULT.DIDNOTRUN}
 
                 chosen = candidate_by_id.get(chosen_id)
                 if chosen is None:
@@ -222,9 +230,10 @@ def solve_with_gom_lp_branching(
     scip.optimize()
     return _result_from_model(
         scip,
-        "gom-lp",
+        "gom-lp-hybrid" if min_confidence > 0 else "gom-lp",
         gom_decisions=int(stats["decisions"]),
         gom_fallbacks=int(stats["fallbacks"]),
+        gom_abstentions=int(stats["abstentions"]),
         gom_inference_ms=float(stats["inference_ms"]),
         gom_extract_ms=float(stats["extract_ms"]),
         gom_tensor_ms=float(stats["tensor_ms"]),
