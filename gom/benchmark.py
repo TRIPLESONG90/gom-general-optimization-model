@@ -86,6 +86,7 @@ def summarize_benchmark(rows: Sequence[dict], baseline_policy: str = "default") 
         decisions = [float(row.get("gom_decisions", 0) or 0) for row in selected]
         fallbacks = [float(row.get("gom_fallbacks", 0) or 0) for row in selected]
         abstentions = [float(row.get("gom_abstentions", 0) or 0) for row in selected]
+        pregate_skips = [float(row.get("gom_pregate_skips", 0) or 0) for row in selected]
         inference = [float(row.get("gom_inference_ms", 0.0) or 0.0) for row in selected]
         extract = [float(row.get("gom_extract_ms", 0.0) or 0.0) for row in selected]
         tensor = [float(row.get("gom_tensor_ms", 0.0) or 0.0) for row in selected]
@@ -103,6 +104,7 @@ def summarize_benchmark(rows: Sequence[dict], baseline_policy: str = "default") 
             "mean_gom_decisions": _metric(decisions, mean),
             "mean_gom_fallbacks": _metric(fallbacks, mean),
             "mean_gom_abstentions": _metric(abstentions, mean),
+            "mean_gom_pregate_skips": _metric(pregate_skips, mean),
             "mean_gom_inference_ms": _metric(inference, mean),
             "gom_ms_per_decision": None if total_decisions <= 0 else sum(inference) / total_decisions,
             "gom_extract_ms_per_decision": None if total_decisions <= 0 else sum(extract) / total_decisions,

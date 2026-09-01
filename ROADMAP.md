@@ -10,7 +10,7 @@ GOM explores a **general optimization policy model** that learns how to control 
 - [x] Validate native ranking distillation against top-1 imitation.
 - [x] Run 512-problem collection and 64-problem held-out benchmark.
 - [x] Record the always-invoke policy's negative result.
-- [ ] Add a cheap depth/node pre-gate before neural inference.
+- [x] Add and evaluate a cheap depth pre-gate before neural inference.
 - [ ] Predict candidate regret/advantage and intervene only on expected gain.
 
 ## v0.2 — executable research scaffold

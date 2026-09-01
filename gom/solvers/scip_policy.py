@@ -28,6 +28,7 @@ class SCIPRunResult:
     gom_decisions: int = 0
     gom_fallbacks: int = 0
     gom_abstentions: int = 0
+    gom_pregate_skips: int = 0
     gom_inference_ms: float = 0.0
     gom_extract_ms: float = 0.0
     gom_tensor_ms: float = 0.0

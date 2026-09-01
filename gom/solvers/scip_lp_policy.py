@@ -102,6 +102,7 @@ def solve_with_gom_lp_branching(
     priority: int = 10_000_000,
     threads: int = 1,
     min_confidence: float = 0.0,
+    max_gom_depth: int | None = None,
 ) -> SCIPRunResult:
     """Solve a MILP while GOM chooses LP branch variables from SCIP's current LP graph.
 
@@ -113,6 +114,8 @@ def solve_with_gom_lp_branching(
     Branchrule, _, SCIP_RESULT, _ = _import_scip()
     if not 0.0 <= min_confidence <= 1.0:
         raise ValueError("min_confidence must be in [0, 1]")
+    if max_gom_depth is not None and max_gom_depth < 0:
+        raise ValueError("max_gom_depth must be non-negative or None")
     if str(device) == "cpu" and threads > 0:
         torch.set_num_threads(threads)
 
@@ -122,6 +125,7 @@ def solve_with_gom_lp_branching(
         "decisions": 0,
         "fallbacks": 0,
         "abstentions": 0,
+        "pregate_skips": 0,
         "inference_ms": 0.0,
         "extract_ms": 0.0,
         "tensor_ms": 0.0,
@@ -135,6 +139,12 @@ def solve_with_gom_lp_branching(
                 cands, cand_sols, cand_fracs, ncands, nprio, nimpl = self.model.getLPBranchCands()
                 if nprio <= 0:
                     stats["fallbacks"] += 1
+                    return {"result": SCIP_RESULT.DIDNOTRUN}
+
+                current = self.model.getCurrentNode()
+                depth = int(current.getDepth()) if current is not None else 0
+                if max_gom_depth is not None and depth > max_gom_depth:
+                    stats["pregate_skips"] += 1
                     return {"result": SCIP_RESULT.DIDNOTRUN}
 
                 if not transformed_map:
@@ -170,7 +180,6 @@ def solve_with_gom_lp_branching(
                     stats["fallbacks"] += 1
                     return {"result": SCIP_RESULT.DIDNOTRUN}
 
-                current = self.model.getCurrentNode()
                 snapshot = SCIPLPGraphSnapshot(
                     col_features=[[float(x) for x in row] for row in col_features],
                     edge_features=[[float(x) for x in edge] for edge in edge_features],
@@ -230,10 +239,11 @@ def solve_with_gom_lp_branching(
     scip.optimize()
     return _result_from_model(
         scip,
-        "gom-lp-hybrid" if min_confidence > 0 else "gom-lp",
+        "gom-lp-hybrid" if min_confidence > 0 or max_gom_depth is not None else "gom-lp",
         gom_decisions=int(stats["decisions"]),
         gom_fallbacks=int(stats["fallbacks"]),
         gom_abstentions=int(stats["abstentions"]),
+        gom_pregate_skips=int(stats["pregate_skips"]),
         gom_inference_ms=float(stats["inference_ms"]),
         gom_extract_ms=float(stats["extract_ms"]),
         gom_tensor_ms=float(stats["tensor_ms"]),
