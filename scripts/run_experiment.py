@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import platform
 import subprocess
@@ -53,7 +52,7 @@ def _git_commit() -> str | None:
 
 
 def main():
-    p = argparse.ArgumentParser(description="Run the end-to-end GOM SCIP v0.3 experiment")
+    p = argparse.ArgumentParser(description="Run an end-to-end GOM SCIP experiment")
     p.add_argument("--config", default="experiments/scip_v03.yaml")
     p.add_argument("--profile", default="smoke")
     p.add_argument("--run-dir", default=None)
@@ -137,6 +136,10 @@ def main():
             "--device", _device(str(train_cfg.get("device", "auto"))),
             "--out", str(checkpoint),
         ]
+        if "ranking_weight" in train_cfg:
+            cmd += ["--ranking-weight", str(train_cfg["ranking_weight"])]
+        if "ranking_temperature" in train_cfg:
+            cmd += ["--ranking-temperature", str(train_cfg["ranking_temperature"])]
         if bool(train_cfg.get("tiny", False)):
             cmd.append("--tiny")
         _run(cmd, dry_run=args.dry_run)
