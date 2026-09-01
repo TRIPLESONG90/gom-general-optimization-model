@@ -31,7 +31,7 @@ def main():
     p.add_argument("--tiny", action="store_true")
     p.add_argument("--init", default=None, help="Optional GOM checkpoint to fine-tune")
     p.add_argument("--val-fraction", type=float, default=0.1)
-    p.add_argument("--ranking-weight", type=float, default=0.75)
+    p.add_argument("--ranking-weight", type=float, default=0.0, help="0 keeps the v0.3 top-1 baseline; v0.4 uses >0")
     p.add_argument("--ranking-temperature", type=float, default=1.0)
     p.add_argument("--out", default="gom_scip_branch.pt")
     args = p.parse_args()
