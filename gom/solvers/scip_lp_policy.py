@@ -40,16 +40,17 @@ def load_lp_gom_checkpoint(path: str, device: str | torch.device = "cpu") -> GOM
     return model
 
 
-def predict_lp_branch_variable(
+def _predict_lp_branch_variable_timed(
     model: GOMModel,
     snapshot: SCIPLPGraphSnapshot,
     *,
     problem_type: str,
     device: str | torch.device = "cpu",
-) -> tuple[str, float]:
+) -> tuple[str, float, float, float]:
     if not snapshot.candidate_columns:
         raise ValueError("LP snapshot has no mapped branch candidates")
 
+    tensor_start = time.perf_counter()
     graph = snapshot_to_problem_graph(snapshot, problem_type)
     batch = collate_graphs([graph]).to(device)
     candidate_mask = torch.zeros_like(batch.variable_mask)
@@ -61,16 +62,36 @@ def predict_lp_branch_variable(
             inverse[node_idx] = variable_id
     if not inverse:
         raise ValueError("no branch candidates map to active LP columns")
+    tensor_ms = (time.perf_counter() - tensor_start) * 1000.0
 
+    model_start = time.perf_counter()
     with torch.inference_mode():
         output = model(batch)
         logits = masked_branch_logits(output["variable_logits"], candidate_mask)
         probs = torch.softmax(logits, dim=-1)
         node_idx = int(logits[0].argmax().item())
         confidence = float(probs[0, node_idx].item())
+    model_ms = (time.perf_counter() - model_start) * 1000.0
+
     chosen = inverse.get(node_idx)
     if chosen is None:
         raise RuntimeError("model selected an unmapped LP column")
+    return chosen, confidence, tensor_ms, model_ms
+
+
+def predict_lp_branch_variable(
+    model: GOMModel,
+    snapshot: SCIPLPGraphSnapshot,
+    *,
+    problem_type: str,
+    device: str | torch.device = "cpu",
+) -> tuple[str, float]:
+    chosen, confidence, _, _ = _predict_lp_branch_variable_timed(
+        model,
+        snapshot,
+        problem_type=problem_type,
+        device=device,
+    )
     return chosen, confidence
 
 
@@ -87,8 +108,8 @@ def solve_with_gom_lp_branching(
 
     The neural policy observes exactly the dynamic bipartite representation exposed
     by SCIP: active LP columns, active rows/cuts, LP/basis features, and current
-    sparse coefficients. The measured inference time includes graph extraction,
-    tensorization, and the model forward pass because all three are solver overhead.
+    sparse coefficients. Latency is decomposed into solver graph extraction/list
+    conversion, graph tensorization, and neural model scoring.
     """
     Branchrule, _, SCIP_RESULT, _ = _import_scip()
     if str(device) == "cpu" and threads > 0:
@@ -96,7 +117,14 @@ def solve_with_gom_lp_branching(
 
     scip, var_map = _build_model(problem, time_limit_s)
     gom = load_lp_gom_checkpoint(checkpoint, device)
-    stats = {"decisions": 0, "fallbacks": 0, "inference_ms": 0.0}
+    stats = {
+        "decisions": 0,
+        "fallbacks": 0,
+        "inference_ms": 0.0,
+        "extract_ms": 0.0,
+        "tensor_ms": 0.0,
+        "model_ms": 0.0,
+    }
     transformed_map: dict[str, str] = {}
 
     class GOMLPBranchRule(Branchrule):
@@ -119,7 +147,8 @@ def solve_with_gom_lp_branching(
                     stats["fallbacks"] += 1
                     return {"result": SCIP_RESULT.DIDNOTRUN}
 
-                start = time.perf_counter()
+                total_start = time.perf_counter()
+                extract_start = total_start
                 col_features, edge_features, row_features, feature_map = self.model.getBipartiteGraphRepresentation(
                     suppress_warnings=True
                 )
@@ -158,13 +187,19 @@ def solve_with_gom_lp_branching(
                         _squash(float(self.model.getSolvingTime())),
                     ],
                 )
-                chosen_id, _ = predict_lp_branch_variable(
+                extract_ms = (time.perf_counter() - extract_start) * 1000.0
+
+                chosen_id, _, tensor_ms, model_ms = _predict_lp_branch_variable_timed(
                     gom,
                     snapshot,
                     problem_type=problem.problem_type,
                     device=device,
                 )
-                stats["inference_ms"] += (time.perf_counter() - start) * 1000.0
+                total_ms = (time.perf_counter() - total_start) * 1000.0
+                stats["inference_ms"] += total_ms
+                stats["extract_ms"] += extract_ms
+                stats["tensor_ms"] += tensor_ms
+                stats["model_ms"] += model_ms
 
                 chosen = candidate_by_id.get(chosen_id)
                 if chosen is None:
@@ -193,4 +228,7 @@ def solve_with_gom_lp_branching(
         gom_decisions=int(stats["decisions"]),
         gom_fallbacks=int(stats["fallbacks"]),
         gom_inference_ms=float(stats["inference_ms"]),
+        gom_extract_ms=float(stats["extract_ms"]),
+        gom_tensor_ms=float(stats["tensor_ms"]),
+        gom_model_ms=float(stats["model_ms"]),
     )
