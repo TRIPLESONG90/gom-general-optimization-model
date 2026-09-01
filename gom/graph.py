@@ -21,6 +21,7 @@ class ProblemGraph:
     x: torch.Tensor
     node_type: torch.Tensor
     relation: torch.Tensor
+    edge_value: torch.Tensor
     variable_mask: torch.Tensor
     problem_type: str
 
@@ -30,12 +31,21 @@ class GraphBatch:
     x: torch.Tensor
     node_type: torch.Tensor
     relation: torch.Tensor
+    edge_value: torch.Tensor
     padding_mask: torch.Tensor
     variable_mask: torch.Tensor
     problem_types: List[str]
 
     def to(self, device: torch.device | str) -> "GraphBatch":
-        return GraphBatch(x=self.x.to(device), node_type=self.node_type.to(device), relation=self.relation.to(device), padding_mask=self.padding_mask.to(device), variable_mask=self.variable_mask.to(device), problem_types=self.problem_types)
+        return GraphBatch(
+            x=self.x.to(device),
+            node_type=self.node_type.to(device),
+            relation=self.relation.to(device),
+            edge_value=self.edge_value.to(device),
+            padding_mask=self.padding_mask.to(device),
+            variable_mask=self.variable_mask.to(device),
+            problem_types=self.problem_types,
+        )
 
 
 def _safe_scale(v: float) -> float:
@@ -54,6 +64,10 @@ def featurize_problem(problem: OptimizationProblem, state: SearchState | None = 
     x = torch.zeros(n, BASE_FEATURE_DIM, dtype=torch.float32)
     node_type = torch.empty(n, dtype=torch.long)
     relation = torch.zeros(n, n, dtype=torch.long)
+    # Signed normalized MILP coefficient a_ij on VARIABLE <-> CONSTRAINT edges.
+    # This preserves the actual coefficient matrix instead of only aggregate
+    # per-variable/per-constraint statistics.
+    edge_value = torch.zeros(n, n, dtype=torch.float32)
     variable_mask = torch.zeros(n, dtype=torch.bool)
     node_type[0] = GLOBAL
     x[0, 0] = 1.0 if problem.sense == "max" else -1.0
@@ -103,13 +117,23 @@ def featurize_problem(problem: OptimizationProblem, state: SearchState | None = 
             x[vi, 8] += 1.0
             relation[vi, idx] = REL_VAR_CON
             relation[idx, vi] = REL_VAR_CON
+            scaled_coeff = _safe_scale(coeff)
+            edge_value[vi, idx] = scaled_coeff
+            edge_value[idx, vi] = scaled_coeff
     if n_con:
         x[1:1 + n_var, 8] /= max(1, n_con)
     relation[0, :] = REL_GLOBAL
     relation[:, 0] = REL_GLOBAL
     for i in range(n):
         relation[i, i] = REL_SELF
-    return ProblemGraph(x=x, node_type=node_type, relation=relation, variable_mask=variable_mask, problem_type=problem.problem_type)
+    return ProblemGraph(
+        x=x,
+        node_type=node_type,
+        relation=relation,
+        edge_value=edge_value,
+        variable_mask=variable_mask,
+        problem_type=problem.problem_type,
+    )
 
 
 def collate_graphs(graphs: list[ProblemGraph]) -> GraphBatch:
@@ -121,6 +145,7 @@ def collate_graphs(graphs: list[ProblemGraph]) -> GraphBatch:
     x = torch.zeros(b, max_n, feat, dtype=torch.float32)
     node_type = torch.zeros(b, max_n, dtype=torch.long)
     relation = torch.zeros(b, max_n, max_n, dtype=torch.long)
+    edge_value = torch.zeros(b, max_n, max_n, dtype=torch.float32)
     padding_mask = torch.ones(b, max_n, dtype=torch.bool)
     variable_mask = torch.zeros(b, max_n, dtype=torch.bool)
     for bi, g in enumerate(graphs):
@@ -128,6 +153,15 @@ def collate_graphs(graphs: list[ProblemGraph]) -> GraphBatch:
         x[bi, :n] = g.x
         node_type[bi, :n] = g.node_type
         relation[bi, :n, :n] = g.relation
+        edge_value[bi, :n, :n] = g.edge_value
         padding_mask[bi, :n] = False
         variable_mask[bi, :n] = g.variable_mask
-    return GraphBatch(x=x, node_type=node_type, relation=relation, padding_mask=padding_mask, variable_mask=variable_mask, problem_types=[g.problem_type for g in graphs])
+    return GraphBatch(
+        x=x,
+        node_type=node_type,
+        relation=relation,
+        edge_value=edge_value,
+        padding_mask=padding_mask,
+        variable_mask=variable_mask,
+        problem_types=[g.problem_type for g in graphs],
+    )
