@@ -15,6 +15,10 @@ def chunks(items, size):
         yield items[start:start + size]
 
 
+def clone_state_dict(model):
+    return {name: tensor.detach().cpu().clone() for name, tensor in model.state_dict().items()}
+
+
 def main():
     p = argparse.ArgumentParser(description="Train GOM branching policy from SCIP native LP graph snapshots")
     p.add_argument("trajectories", nargs="+", help="JSONL files from collect_scip.py containing lp_graph snapshots")
@@ -87,6 +91,11 @@ def main():
             return None, None
         return total_loss / total_count, total_correct / total_count
 
+    best_state = None
+    best_epoch = None
+    best_val_acc = float("-inf")
+    best_val_loss = float("inf")
+
     for epoch in range(1, args.epochs + 1):
         random.shuffle(train_samples)
         model.train()
@@ -117,15 +126,37 @@ def main():
         suffix = "" if val_loss is None else f" val_loss={val_loss:.4f} val_top1={val_acc:.4f}"
         print(f"epoch={epoch:03d} loss={train_loss:.4f} top1={train_acc:.4f}{suffix}")
 
+        if val_loss is not None:
+            better = val_acc > best_val_acc + 1e-12 or (
+                abs(val_acc - best_val_acc) <= 1e-12 and val_loss < best_val_loss
+            )
+            if better:
+                best_state = clone_state_dict(model)
+                best_epoch = epoch
+                best_val_acc = val_acc
+                best_val_loss = val_loss
+
+    if best_state is None:
+        best_state = clone_state_dict(model)
+        best_epoch = args.epochs
+        checkpoint_note = "last epoch (no validation split)"
+    else:
+        checkpoint_note = f"best validation epoch={best_epoch} val_top1={best_val_acc:.4f} val_loss={best_val_loss:.4f}"
+        model.load_state_dict(best_state)
+    print(f"checkpoint selection: {checkpoint_note}")
+
     torch.save(
         {
             "config": cfg.__dict__,
-            "model": model.state_dict(),
+            "model": best_state,
             "input_representation": "scip_native_lp",
             "training": {
                 "ranking_weight": args.ranking_weight,
                 "ranking_temperature": args.ranking_temperature,
                 "seed": args.seed,
+                "best_epoch": best_epoch,
+                "best_val_top1": None if best_val_acc == float("-inf") else best_val_acc,
+                "best_val_loss": None if best_val_loss == float("inf") else best_val_loss,
             },
         },
         args.out,
