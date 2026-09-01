@@ -1,0 +1,82 @@
+name: SCIP Native LP E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feature/v0.5-native-lp-branching"
+    paths:
+      - "gom/**"
+      - "scripts/**"
+      - "tests/**"
+      - ".github/workflows/scip-lp-smoke.yml"
+      - "pyproject.toml"
+  pull_request:
+    paths:
+      - "gom/**"
+      - "scripts/**"
+      - "tests/**"
+      - ".github/workflows/scip-lp-smoke.yml"
+      - "pyproject.toml"
+
+jobs:
+  native-lp-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install GOM + SCIP
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[scip,dev]'
+      - name: Unit tests
+        run: pytest -q
+      - name: Collect native LP strong-branch trajectories
+        run: |
+          python scripts/collect_scip.py \
+            --count 10 \
+            --seed 51000 \
+            --time-limit 2 \
+            --max-steps 32 \
+            --out /tmp/lp-train.jsonl
+      - name: Train tiny native LP GOM
+        run: |
+          python scripts/train_scip_lp_branch.py \
+            /tmp/lp-train.jsonl \
+            --tiny \
+            --epochs 12 \
+            --batch-size 8 \
+            --lr 0.001 \
+            --val-fraction 0.2 \
+            --threads 1 \
+            --out /tmp/gom-lp.pt
+      - name: Held-out native LP branching benchmark
+        run: |
+          python scripts/benchmark_scip.py \
+            --checkpoint /tmp/gom-lp.pt \
+            --gom-input lp \
+            --count 6 \
+            --seed 52000 \
+            --time-limit 2 \
+            --threads 1 \
+            --out /tmp/lp-benchmark.jsonl
+      - name: Summarize benchmark
+        run: |
+          python scripts/summarize_benchmark.py \
+            /tmp/lp-benchmark.jsonl \
+            --markdown /tmp/lp-report.md \
+            --json /tmp/lp-summary.json
+          cat /tmp/lp-report.md
+      - name: Upload v0.5 smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scip-native-lp-smoke
+          path: |
+            /tmp/lp-benchmark.jsonl
+            /tmp/lp-report.md
+            /tmp/lp-summary.json
+          if-no-files-found: warn
