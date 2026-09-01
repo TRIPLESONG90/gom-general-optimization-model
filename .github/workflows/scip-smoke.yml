@@ -9,9 +9,6 @@ on:
       - "experiments/**"
       - "pyproject.toml"
       - ".github/workflows/scip-smoke.yml"
-  push:
-    branches:
-      - "ci/scip-end-to-end-smoke"
 
 jobs:
   scip-smoke:
@@ -30,20 +27,35 @@ jobs:
           import pyscipopt
           print("PySCIPOpt", pyscipopt.__version__)
           PY
-      - name: Run end-to-end smoke experiment
+      - name: Run v0.3 top-1 smoke baseline
         run: |
           python scripts/run_experiment.py \
+            --config experiments/scip_v03.yaml \
             --profile smoke \
-            --run-dir /tmp/gom-scip-smoke
-          cat /tmp/gom-scip-smoke/REPORT.md
-      - name: Upload smoke report
+            --run-dir /tmp/gom-scip-v03
+          cat /tmp/gom-scip-v03/REPORT.md
+      - name: Run v0.4 ranking smoke on the same trajectories
+        run: |
+          mkdir -p /tmp/gom-scip-v04
+          cp /tmp/gom-scip-v03/trajectories-*.jsonl /tmp/gom-scip-v04/
+          python scripts/run_experiment.py \
+            --config experiments/scip_v04.yaml \
+            --profile smoke \
+            --run-dir /tmp/gom-scip-v04 \
+            --skip-collect
+          cat /tmp/gom-scip-v04/REPORT.md
+      - name: Upload smoke reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scip-smoke-report
+          name: scip-smoke-reports
           path: |
-            /tmp/gom-scip-smoke/manifest.json
-            /tmp/gom-scip-smoke/benchmark.jsonl
-            /tmp/gom-scip-smoke/summary.json
-            /tmp/gom-scip-smoke/REPORT.md
+            /tmp/gom-scip-v03/manifest.json
+            /tmp/gom-scip-v03/benchmark.jsonl
+            /tmp/gom-scip-v03/summary.json
+            /tmp/gom-scip-v03/REPORT.md
+            /tmp/gom-scip-v04/manifest.json
+            /tmp/gom-scip-v04/benchmark.jsonl
+            /tmp/gom-scip-v04/summary.json
+            /tmp/gom-scip-v04/REPORT.md
           if-no-files-found: warn
