@@ -13,7 +13,7 @@ GLOBAL, VARIABLE, CONSTRAINT = 0, 1, 2
 NUM_NODE_TYPES = 3
 REL_NONE, REL_SELF, REL_GLOBAL, REL_VAR_CON = 0, 1, 2, 3
 NUM_RELATIONS = 4
-BASE_FEATURE_DIM = 16
+BASE_FEATURE_DIM = 19
 
 
 @dataclass
@@ -49,7 +49,6 @@ class GraphBatch:
 
 
 def _safe_scale(v: float) -> float:
-    # Solver bounds can legitimately be +/-inf before an incumbent/bound exists.
     v = float(v)
     if not math.isfinite(v):
         return 0.0
@@ -64,9 +63,6 @@ def featurize_problem(problem: OptimizationProblem, state: SearchState | None = 
     x = torch.zeros(n, BASE_FEATURE_DIM, dtype=torch.float32)
     node_type = torch.empty(n, dtype=torch.long)
     relation = torch.zeros(n, n, dtype=torch.long)
-    # Signed normalized MILP coefficient a_ij on VARIABLE <-> CONSTRAINT edges.
-    # This preserves the actual coefficient matrix instead of only aggregate
-    # per-variable/per-constraint statistics.
     edge_value = torch.zeros(n, n, dtype=torch.float32)
     variable_mask = torch.zeros(n, dtype=torch.bool)
     node_type[0] = GLOBAL
@@ -98,6 +94,9 @@ def featurize_problem(problem: OptimizationProblem, state: SearchState | None = 
             x[i, 12] = _safe_scale(state.variable_lb.get(var.id, var.lb))
             x[i, 13] = _safe_scale(state.variable_ub.get(var.id, var.ub))
             x[i, 14] = 1.0 if state.branch_candidates.get(var.id, False) else 0.0
+            x[i, 15] = _safe_scale(state.variable_reduced_cost.get(var.id, 0.0))
+            x[i, 16] = _safe_scale(state.variable_pseudocost_down.get(var.id, 0.0))
+            x[i, 17] = _safe_scale(state.variable_pseudocost_up.get(var.id, 0.0))
     for j, con in enumerate(problem.constraints):
         idx = 1 + n_var + j
         node_type[idx] = CONSTRAINT
