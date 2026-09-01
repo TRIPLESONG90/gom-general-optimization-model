@@ -41,8 +41,8 @@ def main():
         graph = featurize_problem(sample.problem, sample.state)
         exact[tensor_digest(graph.x, graph.relation, graph.edge_value, graph.variable_mask)].append(sample.expert_variable)
         rounded3[tensor_digest(graph.x, graph.relation, graph.edge_value, graph.variable_mask, decimals=3)].append(sample.expert_variable)
-        # Dynamic state lives in global features 3:9 and variable features 9:15.
-        dyn = torch.cat((graph.x[0, 3:9], graph.x[1:1 + len(sample.problem.variables), 9:15].flatten()))
+        # Dynamic state: global solver state plus all per-variable LP/history signals.
+        dyn = torch.cat((graph.x[0, 3:9], graph.x[1:1 + len(sample.problem.variables), 9:18].flatten()))
         dynamic[tensor_digest(dyn, decimals=6)].append(sample.expert_variable)
 
     def report(name: str, groups: dict[str, list[str]]):
@@ -60,6 +60,15 @@ def main():
     report("exact_full_input", exact)
     report("rounded_3dp_full_input", rounded3)
     report("dynamic_state_only", dynamic)
+
+    nonzero_reduced = sum(bool(s.state.variable_reduced_cost) and any(abs(v) > 1e-12 for v in s.state.variable_reduced_cost.values()) for s in samples)
+    nonzero_pc = sum(
+        any(abs(v) > 1e-12 for v in s.state.variable_pseudocost_down.values())
+        or any(abs(v) > 1e-12 for v in s.state.variable_pseudocost_up.values())
+        for s in samples
+    )
+    print(f"states_with_nonzero_reduced_cost={nonzero_reduced}/{len(samples)}")
+    print(f"states_with_nonzero_pseudocost={nonzero_pc}/{len(samples)}")
 
 
 if __name__ == "__main__":
