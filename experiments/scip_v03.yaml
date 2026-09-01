@@ -1,0 +1,44 @@
+name: scip-v03
+
+profiles:
+  smoke:
+    collect:
+      shards: 1
+      count_per_shard: 8
+      seed: 31000
+      time_limit: 2.0
+      max_steps: 24
+    train:
+      tiny: true
+      epochs: 2
+      batch_size: 8
+      lr: 0.0001
+      seed: 32000
+      val_fraction: 0.20
+      device: auto
+    benchmark:
+      count: 6
+      seed: 33000
+      time_limit: 2.0
+      device: cpu
+
+  research:
+    collect:
+      shards: 8
+      count_per_shard: 64
+      seed: 41000
+      time_limit: 8.0
+      max_steps: 96
+    train:
+      tiny: false
+      epochs: 20
+      batch_size: 32
+      lr: 0.0001
+      seed: 42000
+      val_fraction: 0.15
+      device: auto
+    benchmark:
+      count: 64
+      seed: 99001
+      time_limit: 10.0
+      device: cpu

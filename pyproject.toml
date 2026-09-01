@@ -14,5 +14,9 @@ solver = ["ortools>=9.12", "highspy>=1.10"]
 scip = ["pyscipopt>=6.0"]
 dev = ["pytest>=8.0"]
 
+[tool.setuptools.packages.find]
+include = ["gom*"]
+exclude = ["experiments*", "scripts*", "tests*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
