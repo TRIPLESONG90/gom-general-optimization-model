@@ -14,10 +14,20 @@ GOM explores a **general optimization policy model** that learns how to control 
 
 ## v0.3 — dynamic solver policy
 
-- Train on `(problem, solver_state) -> branch action`
-- Replayable SCIP trajectory dataset
-- Default branching vs strong branching vs GOM branching benchmark
-- Metrics: primal integral, dual integral, gap-vs-time, inference overhead
+Implemented scaffold:
+
+- Train on `(problem, solver_state) -> branch variable`
+- Replayable SCIP trajectory JSONL dataset
+- Candidate-masked branch imitation loss
+- GOM branching rule with safe SCIP fallback
+- Default branching vs full-strong branching vs GOM benchmark harness
+- Runtime metrics: objective, primal/dual bound, gap, nodes, wall time, GOM inference overhead
+
+Next measurement work:
+
+- primal integral / dual integral traces
+- larger heterogeneous MILP corpus
+- held-out-family generalization benchmark
 
 ## v0.4 — learned neighborhood search
 

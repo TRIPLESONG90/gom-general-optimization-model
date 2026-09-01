@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List
+import math
 
 import torch
 
@@ -38,6 +39,10 @@ class GraphBatch:
 
 
 def _safe_scale(v: float) -> float:
+    # Solver bounds can legitimately be +/-inf before an incumbent/bound exists.
+    v = float(v)
+    if not math.isfinite(v):
+        return 0.0
     return float(v / (1.0 + abs(v)))
 
 

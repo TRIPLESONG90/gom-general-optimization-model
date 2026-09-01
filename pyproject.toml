@@ -1,6 +1,6 @@
 [project]
 name = "gom-30m"
-version = "0.2.0"
+version = "0.3.0"
 description = "General Optimization Model MVP: unified optimization IR + heterogeneous transformer + solver adapters"
 requires-python = ">=3.10"
 dependencies = [
