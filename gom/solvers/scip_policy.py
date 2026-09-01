@@ -12,6 +12,7 @@ from ..ir import OptimizationProblem
 from ..model import GOMConfig, GOMModel
 from ..state import SearchState
 from ..trajectory_dataset import masked_branch_logits
+from .scip_mapping import build_transformed_variable_map, resolve_original_variable_id
 
 
 @dataclass(slots=True)
@@ -178,9 +179,10 @@ def solve_with_gom_branching(
     priority: int = 10_000_000,
 ) -> SCIPRunResult:
     Branchrule, _, SCIP_RESULT, _ = _import_scip()
-    scip, _ = _build_model(problem, time_limit_s)
+    scip, var_map = _build_model(problem, time_limit_s)
     gom = load_gom_checkpoint(checkpoint, device)
     stats = {"decisions": 0, "fallbacks": 0, "inference_ms": 0.0}
+    transformed_map: dict[str, str] = {}
 
     class GOMBranchRule(Branchrule):
         def branchexeclp(self, allowaddcons):
@@ -190,12 +192,21 @@ def solve_with_gom_branching(
                     stats["fallbacks"] += 1
                     return {"result": SCIP_RESULT.DIDNOTRUN}
 
-                active_cands = list(cands[:nprio])
-                active_sols = list(cand_sols[:nprio])
-                active_fracs = list(cand_fracs[:nprio])
-                candidate_ids = [c.name for c in active_cands]
-                candidate_by_id = {c.name: c for c in active_cands}
-                candidate_sol = {c.name: float(s) for c, s in zip(active_cands, active_sols)}
+                if not transformed_map:
+                    transformed_map.update(build_transformed_variable_map(self.model, var_map))
+
+                resolved = []
+                for cand, sol, frac in zip(cands[:nprio], cand_sols[:nprio], cand_fracs[:nprio]):
+                    original_id = resolve_original_variable_id(cand, transformed_map, var_map)
+                    if original_id is not None:
+                        resolved.append((original_id, cand, float(sol), float(frac)))
+                if not resolved:
+                    stats["fallbacks"] += 1
+                    return {"result": SCIP_RESULT.DIDNOTRUN}
+
+                candidate_ids = [original_id for original_id, _, _, _ in resolved]
+                candidate_by_id = {original_id: cand for original_id, cand, _, _ in resolved}
+                candidate_sol = {original_id: sol for original_id, _, sol, _ in resolved}
 
                 try:
                     primal = float(self.model.getPrimalbound())
@@ -218,11 +229,11 @@ def solve_with_gom_branching(
                     depth=int(current.getDepth()) if current is not None else 0,
                     nodes=int(self.model.getNNodes()),
                     elapsed_s=float(self.model.getSolvingTime()),
-                    variable_lp=candidate_sol,
-                    variable_fractionality={c.name: float(f) for c, f in zip(active_cands, active_fracs)},
-                    variable_lb={c.name: float(c.getLbLocal()) for c in active_cands},
-                    variable_ub={c.name: float(c.getUbLocal()) for c in active_cands},
-                    branch_candidates={c.name: True for c in active_cands},
+                    variable_lp={original_id: sol for original_id, _, sol, _ in resolved},
+                    variable_fractionality={original_id: frac for original_id, _, _, frac in resolved},
+                    variable_lb={original_id: float(cand.getLbLocal()) for original_id, cand, _, _ in resolved},
+                    variable_ub={original_id: float(cand.getUbLocal()) for original_id, cand, _, _ in resolved},
+                    branch_candidates={original_id: True for original_id, _, _, _ in resolved},
                 )
 
                 start = time.perf_counter()
