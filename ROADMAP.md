@@ -2,6 +2,14 @@
 
 GOM explores a **general optimization policy model** that learns how to control search rather than replacing mathematical optimization solvers outright.
 
+## v0.5 — native solver-state representation
+
+- [x] Capture SCIP native current-LP bipartite graphs.
+- [x] Connect native-LP checkpoints to a live SCIP branch rule.
+- [x] Vectorize live edge tensorization and remove the generic copy pass.
+- [x] Validate native ranking distillation against top-1 imitation.
+- [ ] Scale trajectory collection and run the 64-problem research benchmark.
+
 ## v0.2 — executable research scaffold
 
 - Unified linear Optimization IR

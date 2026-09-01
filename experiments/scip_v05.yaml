@@ -1,0 +1,16 @@
+name: scip-v05-native-lp-ranking
+
+profiles:
+  smoke:
+    collect: {count: 16, seed: 51000, time_limit: 2.0, max_steps: 32}
+    train:
+      {tiny: true, epochs: 20, batch_size: 16, lr: 0.0003, seed: 52000,
+       val_fraction: 0.25, ranking_weight: 0.75, ranking_temperature: 1.0, threads: 1}
+    benchmark: {count: 6, seed: 53000, time_limit: 2.0, gom_input: lp, threads: 1}
+
+  research:
+    collect: {count: 512, seed: 61000, time_limit: 8.0, max_steps: 96}
+    train:
+      {tiny: false, epochs: 30, batch_size: 32, lr: 0.0001, seed: 62000,
+       val_fraction: 0.15, ranking_weight: 0.75, ranking_temperature: 1.0, threads: 1}
+    benchmark: {count: 64, seed: 99001, time_limit: 10.0, gom_input: lp, threads: 1}

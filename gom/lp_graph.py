@@ -14,6 +14,7 @@ from .graph import (
     REL_SELF,
     REL_VAR_CON,
     BASE_FEATURE_DIM,
+    GraphBatch,
     ProblemGraph,
 )
 
@@ -131,19 +132,20 @@ def snapshot_to_problem_graph(snapshot: SCIPLPGraphSnapshot, problem_type: str =
         x[row_offset:row_offset + n_row, :width] = row[:, :width]
         node_type[row_offset:row_offset + n_row] = CONSTRAINT
 
-    for edge in snapshot.edge_features:
-        if len(edge) < 3:
-            continue
-        col_idx, row_idx, coefficient = int(edge[0]), int(edge[1]), float(edge[2])
-        if not (0 <= col_idx < n_col and 0 <= row_idx < n_row):
-            continue
-        ci = 1 + col_idx
-        ri = row_offset + row_idx
-        relation[ci, ri] = REL_VAR_CON
-        relation[ri, ci] = REL_VAR_CON
-        scaled = _signed_squash(coefficient)
-        edge_value[ci, ri] = scaled
-        edge_value[ri, ci] = scaled
+    if snapshot.edge_features:
+        edges = torch.as_tensor(snapshot.edge_features, dtype=torch.float32)
+        if edges.ndim == 2 and edges.shape[1] >= 3:
+            col_idx = edges[:, 0].long()
+            row_idx = edges[:, 1].long()
+            valid = (col_idx >= 0) & (col_idx < n_col) & (row_idx >= 0) & (row_idx < n_row)
+            ci = 1 + col_idx[valid]
+            ri = row_offset + row_idx[valid]
+            coefficients = torch.nan_to_num(edges[valid, 2], nan=0.0, posinf=0.0, neginf=0.0)
+            scaled = coefficients / (1.0 + coefficients.abs())
+            relation[ci, ri] = REL_VAR_CON
+            relation[ri, ci] = REL_VAR_CON
+            edge_value[ci, ri] = scaled
+            edge_value[ri, ci] = scaled
 
     relation[0, :] = REL_GLOBAL
     relation[:, 0] = REL_GLOBAL
@@ -157,4 +159,23 @@ def snapshot_to_problem_graph(snapshot: SCIPLPGraphSnapshot, problem_type: str =
         edge_value=edge_value,
         variable_mask=variable_mask,
         problem_type=problem_type,
+    )
+
+
+def snapshot_to_graph_batch(
+    snapshot: SCIPLPGraphSnapshot,
+    problem_type: str = "scip_lp",
+    *,
+    device: str | torch.device = "cpu",
+) -> GraphBatch:
+    """Tensorize one live SCIP snapshot without generic padding and copies."""
+    graph = snapshot_to_problem_graph(snapshot, problem_type)
+    return GraphBatch(
+        x=graph.x.unsqueeze(0).to(device),
+        node_type=graph.node_type.unsqueeze(0).to(device),
+        relation=graph.relation.unsqueeze(0).to(device),
+        edge_value=graph.edge_value.unsqueeze(0).to(device),
+        padding_mask=torch.zeros((1, graph.x.shape[0]), dtype=torch.bool, device=device),
+        variable_mask=graph.variable_mask.unsqueeze(0).to(device),
+        problem_types=[problem_type],
     )

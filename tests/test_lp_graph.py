@@ -1,7 +1,7 @@
 import torch
 
 from gom.graph import BASE_FEATURE_DIM
-from gom.lp_graph import SCIPLPGraphSnapshot, snapshot_to_problem_graph
+from gom.lp_graph import SCIPLPGraphSnapshot, snapshot_to_graph_batch, snapshot_to_problem_graph
 from gom.lp_graph_dataset import LPBranchSample, make_lp_branch_batch
 from gom.model import GOMConfig, GOMModel
 from gom.solvers.scip_lp_policy import predict_lp_branch_variable
@@ -26,6 +26,17 @@ def test_snapshot_projects_to_gom_graph():
     assert graph.variable_mask.tolist() == [False, True, True, False]
     assert graph.edge_value[1, 3] != 0
     assert graph.edge_value[2, 3] != 0
+
+
+def test_single_snapshot_fast_batch_matches_graph():
+    graph = snapshot_to_problem_graph(_snapshot(), "test_milp")
+    batch = snapshot_to_graph_batch(_snapshot(), "test_milp")
+    assert torch.equal(batch.x[0], graph.x)
+    assert torch.equal(batch.node_type[0], graph.node_type)
+    assert torch.equal(batch.relation[0], graph.relation)
+    assert torch.equal(batch.edge_value[0], graph.edge_value)
+    assert torch.equal(batch.variable_mask[0], graph.variable_mask)
+    assert not batch.padding_mask.any()
 
 
 def test_lp_branch_batch_maps_expert_to_column():

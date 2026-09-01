@@ -6,9 +6,8 @@ from typing import Any
 
 import torch
 
-from ..graph import collate_graphs
 from ..ir import OptimizationProblem
-from ..lp_graph import SCIPLPGraphSnapshot, snapshot_to_problem_graph
+from ..lp_graph import SCIPLPGraphSnapshot, snapshot_to_graph_batch
 from ..model import GOMConfig, GOMModel
 from ..trajectory_dataset import masked_branch_logits
 from .scip_mapping import build_transformed_variable_map, resolve_original_variable_id
@@ -51,8 +50,7 @@ def _predict_lp_branch_variable_timed(
         raise ValueError("LP snapshot has no mapped branch candidates")
 
     tensor_start = time.perf_counter()
-    graph = snapshot_to_problem_graph(snapshot, problem_type)
-    batch = collate_graphs([graph]).to(device)
+    batch = snapshot_to_graph_batch(snapshot, problem_type, device=device)
     candidate_mask = torch.zeros_like(batch.variable_mask)
     inverse: dict[int, str] = {}
     for variable_id, col_idx in snapshot.candidate_columns.items():
