@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+import math
 from typing import Any
 
 import torch
@@ -48,8 +49,49 @@ class SCIPLPGraphSnapshot:
         )
 
 
+def _signed_squash(value: float) -> float:
+    value = float(value)
+    if not math.isfinite(value):
+        return 0.0
+    return value / (1.0 + abs(value))
+
+
+# SCIP 10 / PySCIPOpt 6.2 native graph schema. Binary flags and already bounded
+# values are left untouched; unbounded magnitude features are squashed to (-1, 1).
+_DEFAULT_COL_SCALE = {
+    "obj_coef", "red_cost", "best_incumbent_val", "avg_incumbent_val", "age"
+}
+_DEFAULT_ROW_SCALE = {"n_non_zeros", "bias", "norm", "dual_sol", "age"}
+
+
+def _normalize_feature_rows(
+    rows: list[list[float]],
+    names: dict[str, int] | None,
+    scale_names: set[str],
+) -> torch.Tensor:
+    if not rows:
+        return torch.empty((0, 0), dtype=torch.float32)
+    tensor = torch.tensor(rows, dtype=torch.float32)
+    if names:
+        indices = [index for name, index in names.items() if name in scale_names]
+    else:
+        indices = []
+    for index in indices:
+        if 0 <= index < tensor.shape[1]:
+            values = tensor[:, index]
+            finite = torch.isfinite(values)
+            squashed = values / (1.0 + values.abs())
+            tensor[:, index] = torch.where(finite, squashed, torch.zeros_like(values))
+    tensor = torch.nan_to_num(tensor, nan=0.0, posinf=0.0, neginf=0.0)
+    return tensor
+
+
 def snapshot_to_problem_graph(snapshot: SCIPLPGraphSnapshot, problem_type: str = "scip_lp") -> ProblemGraph:
-    """Project SCIP's dynamic LP graph into the existing GOM graph container."""
+    """Project SCIP's dynamic LP graph into the existing GOM graph container.
+
+    Magnitude-sensitive native features are semantically normalized while one-hot,
+    basis-state, and already bounded LP features retain their original meaning.
+    """
     n_col = len(snapshot.col_features)
     n_row = len(snapshot.row_features)
     n = 1 + n_col + n_row
@@ -63,10 +105,16 @@ def snapshot_to_problem_graph(snapshot: SCIPLPGraphSnapshot, problem_type: str =
     node_type[0] = GLOBAL
     if snapshot.global_features:
         width = min(BASE_FEATURE_DIM, len(snapshot.global_features))
-        x[0, :width] = torch.tensor(snapshot.global_features[:width], dtype=torch.float32)
+        global_values = [_signed_squash(v) if abs(float(v)) > 1.0 else float(v) for v in snapshot.global_features[:width]]
+        x[0, :width] = torch.tensor(global_values, dtype=torch.float32)
 
+    feature_map = snapshot.feature_map or {}
     if n_col:
-        col = torch.tensor(snapshot.col_features, dtype=torch.float32)
+        col = _normalize_feature_rows(
+            snapshot.col_features,
+            feature_map.get("col"),
+            _DEFAULT_COL_SCALE,
+        )
         width = min(BASE_FEATURE_DIM, col.shape[1])
         x[1:1 + n_col, :width] = col[:, :width]
         node_type[1:1 + n_col] = VARIABLE
@@ -74,7 +122,11 @@ def snapshot_to_problem_graph(snapshot: SCIPLPGraphSnapshot, problem_type: str =
 
     row_offset = 1 + n_col
     if n_row:
-        row = torch.tensor(snapshot.row_features, dtype=torch.float32)
+        row = _normalize_feature_rows(
+            snapshot.row_features,
+            feature_map.get("row"),
+            _DEFAULT_ROW_SCALE,
+        )
         width = min(BASE_FEATURE_DIM, row.shape[1])
         x[row_offset:row_offset + n_row, :width] = row[:, :width]
         node_type[row_offset:row_offset + n_row] = CONSTRAINT
@@ -89,7 +141,7 @@ def snapshot_to_problem_graph(snapshot: SCIPLPGraphSnapshot, problem_type: str =
         ri = row_offset + row_idx
         relation[ci, ri] = REL_VAR_CON
         relation[ri, ci] = REL_VAR_CON
-        scaled = coefficient / (1.0 + abs(coefficient))
+        scaled = _signed_squash(coefficient)
         edge_value[ci, ri] = scaled
         edge_value[ri, ci] = scaled
 
