@@ -1,5 +1,6 @@
 import torch
 
+from gom.graph import BASE_FEATURE_DIM
 from gom.lp_graph import SCIPLPGraphSnapshot, snapshot_to_problem_graph
 from gom.lp_graph_dataset import LPBranchSample, make_lp_branch_batch
 from gom.model import GOMConfig, GOMModel
@@ -21,7 +22,7 @@ def _snapshot():
 
 def test_snapshot_projects_to_gom_graph():
     graph = snapshot_to_problem_graph(_snapshot(), "test_milp")
-    assert graph.x.shape == (4, 16)  # global + 2 columns + 1 row
+    assert graph.x.shape == (4, BASE_FEATURE_DIM)  # global + 2 columns + 1 row
     assert graph.variable_mask.tolist() == [False, True, True, False]
     assert graph.edge_value[1, 3] != 0
     assert graph.edge_value[2, 3] != 0
