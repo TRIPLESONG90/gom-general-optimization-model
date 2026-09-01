@@ -17,6 +17,15 @@ class BranchStep:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "BranchStep":
+        return cls(
+            state=SearchState.from_dict(data["state"]),
+            chosen_variable=data["chosen_variable"],
+            chosen_value=float(data.get("chosen_value", 0.0)),
+            score=float(data.get("score", 0.0)),
+        )
+
 
 @dataclass(slots=True)
 class SolverTrajectory:
@@ -27,4 +36,21 @@ class SolverTrajectory:
     final_objective: float | None = None
 
     def to_dict(self) -> dict:
-        return {"problem": self.problem.to_dict(), "solver": self.solver, "steps": [s.to_dict() for s in self.steps], "final_status": self.final_status, "final_objective": self.final_objective}
+        return {
+            "problem": self.problem.to_dict(),
+            "solver": self.solver,
+            "steps": [s.to_dict() for s in self.steps],
+            "final_status": self.final_status,
+            "final_objective": self.final_objective,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SolverTrajectory":
+        objective = data.get("final_objective")
+        return cls(
+            problem=OptimizationProblem.from_dict(data["problem"]),
+            solver=str(data.get("solver", "unknown")),
+            steps=[BranchStep.from_dict(s) for s in data.get("steps", [])],
+            final_status=str(data.get("final_status", "unknown")),
+            final_objective=None if objective is None else float(objective),
+        )
