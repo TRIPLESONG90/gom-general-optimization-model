@@ -32,12 +32,12 @@ jobs:
             --time-limit 2 \
             --max-steps 24 \
             --out /tmp/diagnostic-trajectories.jsonl
-      - name: Memorization diagnostic
+      - name: Pure top-1 memorization diagnostic
         run: |
           python scripts/diagnose_branch_overfit.py \
             /tmp/diagnostic-trajectories.jsonl \
             --samples 24 \
-            --steps 300 \
+            --steps 500 \
             --lr 0.001 \
-            --ranking-weight 0.75 \
+            --ranking-weight 0.0 \
             --require-top1 0.95
