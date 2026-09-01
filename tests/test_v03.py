@@ -78,3 +78,15 @@ def test_policy_prediction_is_restricted_to_candidates():
     )
     assert chosen in {"x0", "x1"}
     assert 0.0 <= confidence <= 1.0
+
+
+def test_multidimensional_knapsack_has_multiple_packing_constraints():
+    from gom.generators import generate_multidimensional_knapsack
+
+    problem = generate_multidimensional_knapsack(random.Random(3), n=20, m=4)
+    problem.validate()
+    assert problem.problem_type == "multidimensional_knapsack"
+    assert len(problem.variables) == 20
+    assert len(problem.constraints) == 4
+    assert all(c.sense == "<=" for c in problem.constraints)
+    assert all(c.coefficients for c in problem.constraints)

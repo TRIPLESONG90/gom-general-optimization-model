@@ -5,7 +5,7 @@ import json
 import random
 from statistics import mean
 
-from gom.generators import generate_assignment, generate_knapsack
+from gom.generators import generate_knapsack, generate_multidimensional_knapsack
 from gom.solvers.scip_policy import solve_scip_baseline, solve_with_gom_branching
 
 
@@ -13,7 +13,7 @@ def main():
     p = argparse.ArgumentParser(description="SCIP default/fullstrong/GOM branching benchmark")
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--count", type=int, default=20)
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=10000, help="Use a seed disjoint from training data")
     p.add_argument("--time-limit", type=float, default=10.0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--out", default="scip_benchmark.jsonl")
@@ -23,11 +23,14 @@ def main():
     rows = []
     with open(args.out, "w", encoding="utf-8") as f:
         for i in range(args.count):
-            problem = (
-                generate_knapsack(rng, rng.randint(30, 80))
-                if i % 2 == 0
-                else generate_assignment(rng, rng.randint(6, 12))
-            )
+            if i % 4 == 0:
+                problem = generate_knapsack(rng, rng.randint(80, 160))
+            else:
+                problem = generate_multidimensional_knapsack(
+                    rng,
+                    n=rng.randint(70, 150),
+                    m=rng.randint(5, 12),
+                )
             for policy in ("default", "fullstrong", "gom"):
                 if policy == "gom":
                     result = solve_with_gom_branching(
@@ -56,6 +59,14 @@ def main():
             f"mean_time={mean(r['wall_time_s'] for r in selected):.3f}s",
             f"mean_nodes={mean(r['nodes'] for r in selected):.1f}",
             f"mean_gap={mean(finite_gaps):.6f}" if finite_gaps else "mean_gap=n/a",
+        )
+    gom = [r for r in rows if r["policy"] == "gom"]
+    if gom:
+        print(
+            "gom diagnostics",
+            f"decisions={sum(r['gom_decisions'] for r in gom)}",
+            f"fallbacks={sum(r['gom_fallbacks'] for r in gom)}",
+            f"inference_ms={sum(r['gom_inference_ms'] for r in gom):.1f}",
         )
 
 
