@@ -217,7 +217,8 @@ def listwise_strong_branch_loss(
 
     teacher_logits = (standardized / temperature).masked_fill(~score_mask, -1e9)
     teacher_probs = torch.softmax(teacher_logits, dim=-1).detach()
-    student_log_probs = torch.log_softmax(logits, dim=-1)
+    ranked_student_logits = logits.masked_fill(~score_mask, -1e9)
+    student_log_probs = torch.log_softmax(ranked_student_logits, dim=-1)
     per_row = -(teacher_probs * student_log_probs).sum(dim=-1)
     return per_row[valid_rows].mean(), valid_rows
 
