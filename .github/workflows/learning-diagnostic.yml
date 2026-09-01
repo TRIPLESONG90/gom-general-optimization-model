@@ -8,6 +8,7 @@ on:
     paths:
       - "gom/**"
       - "scripts/diagnose_branch_overfit.py"
+      - "scripts/diagnose_observability.py"
       - ".github/workflows/learning-diagnostic.yml"
       - "pyproject.toml"
 
@@ -32,6 +33,11 @@ jobs:
             --time-limit 2 \
             --max-steps 24 \
             --out /tmp/diagnostic-trajectories.jsonl
+      - name: Observability collision diagnostic
+        run: |
+          python scripts/diagnose_observability.py \
+            /tmp/diagnostic-trajectories.jsonl \
+            --samples 24
       - name: Pure top-1 memorization diagnostic
         run: |
           python scripts/diagnose_branch_overfit.py \
