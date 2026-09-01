@@ -16,16 +16,9 @@ def collect_strong_branching_trajectory(
     max_steps: int = 512,
     strong_branch_iterations: int = 100,
 ) -> SolverTrajectory:
-    """Run SCIP with a strong-branching teacher and record branch decisions.
-
-    This is intentionally expensive: it is a DATA GENERATOR, not the production
-    inference path. Each step retains the full set of finite strong-branch scores
-    so GOM can learn the candidate ranking instead of only the winning variable.
-
-    Requires PySCIPOpt 6.x / SCIP 10.x or another compatible pair.
-    """
+    """Run SCIP with a strong-branching teacher and record branch decisions."""
     try:
-        from pyscipopt import Model, Branchrule, SCIP_RESULT, quicksum
+        from pyscipopt import Model, Branchrule, SCIP_RESULT, SCIP_BRANCHDIR, quicksum
     except ImportError as e:
         raise RuntimeError(
             "PySCIPOpt is optional. Install a SCIP-compatible PySCIPOpt build, "
@@ -55,6 +48,13 @@ def collect_strong_branching_trajectory(
     steps: list[BranchStep] = []
     transformed_map: dict[str, str] = {}
 
+    def safe_feature(fn, default: float = 0.0) -> float:
+        try:
+            value = float(fn())
+            return value if math.isfinite(value) else default
+        except Exception:
+            return default
+
     class StrongBranchTeacher(Branchrule):
         def branchexeclp(self, allowaddcons):
             if len(steps) >= max_steps:
@@ -74,6 +74,25 @@ def collect_strong_branching_trajectory(
             eligible = list(candidate_ids)
             if not eligible:
                 return {"result": SCIP_RESULT.DIDNOTRUN}
+
+            # Capture history/LP signals BEFORE strong branching mutates/updates
+            # internal statistics for this decision.
+            reduced_cost = {
+                candidate_ids[i]: safe_feature(lambda i=i: self.model.getVarRedcost(cands[i]))
+                for i in eligible
+            }
+            pseudocost_down = {
+                candidate_ids[i]: safe_feature(
+                    lambda i=i: self.model.getVarPseudocost(cands[i], SCIP_BRANCHDIR.DOWNWARDS)
+                )
+                for i in eligible
+            }
+            pseudocost_up = {
+                candidate_ids[i]: safe_feature(
+                    lambda i=i: self.model.getVarPseudocost(cands[i], SCIP_BRANCHDIR.UPWARDS)
+                )
+                for i in eligible
+            }
 
             node_no = self.model.getNNodes()
             lp_obj = self.model.getLPObjVal()
@@ -151,6 +170,9 @@ def collect_strong_branching_trajectory(
                 variable_lb={candidate_ids[i]: float(cands[i].getLbLocal()) for i in eligible},
                 variable_ub={candidate_ids[i]: float(cands[i].getUbLocal()) for i in eligible},
                 branch_candidates={candidate_ids[i]: True for i in eligible},
+                variable_reduced_cost=reduced_cost,
+                variable_pseudocost_down=pseudocost_down,
+                variable_pseudocost_up=pseudocost_up,
             )
             steps.append(
                 BranchStep(
