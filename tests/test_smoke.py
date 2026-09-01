@@ -42,3 +42,15 @@ def test_dynamic_search_state_features():
     g = featurize_problem(p, st)
     assert g.x.shape[1] == 16
     assert g.x[1, 14].item() == 1.0
+
+
+def test_milp_coefficients_are_preserved_on_edges():
+    p = generate_knapsack(random.Random(6), 6)
+    g = featurize_problem(p)
+    # Knapsack has one constraint after the six variable nodes.
+    constraint_index = 1 + len(p.variables)
+    edge = g.edge_value[1, constraint_index]
+    assert edge != 0
+    assert torch.isclose(edge, g.edge_value[constraint_index, 1])
+    batch = collate_graphs([g])
+    assert batch.edge_value.shape[-2:] == g.edge_value.shape
