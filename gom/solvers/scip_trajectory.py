@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ..ir import OptimizationProblem
@@ -18,8 +19,8 @@ def collect_strong_branching_trajectory(
     """Run SCIP with a strong-branching teacher and record branch decisions.
 
     This is intentionally expensive: it is a DATA GENERATOR, not the production
-    inference path. The resulting `(problem, state) -> chosen_variable` records
-    are behavior-cloning targets for GOM.
+    inference path. Each step retains the full set of finite strong-branch scores
+    so GOM can learn the candidate ranking instead of only the winning variable.
 
     Requires PySCIPOpt 6.x / SCIP 10.x or another compatible pair.
     """
@@ -93,7 +94,7 @@ def collect_strong_branching_trajectory(
                             up_bounds[i] = up
                         down_gain = max(down - last_lp, 0.0) if downvalid else 0.0
                         up_gain = max(up - last_lp, 0.0) if upvalid else 0.0
-                        scores[i] = self.model.getBranchScoreMultiple(cand, [down_gain, up_gain])
+                        scores[i] = float(self.model.getBranchScoreMultiple(cand, [down_gain, up_gain]))
                         continue
 
                     result = self.model.getVarStrongbranch(cand, strong_branch_iterations, idempotent=False)
@@ -107,17 +108,21 @@ def collect_strong_branching_trajectory(
                         up_bounds[i] = up
                     down_gain = max(down - lp_obj, 0.0) if downvalid else 0.0
                     up_gain = max(up - lp_obj, 0.0) if upvalid else 0.0
-                    scores[i] = self.model.getBranchScoreMultiple(cand, [down_gain, up_gain])
+                    scores[i] = float(self.model.getBranchScoreMultiple(cand, [down_gain, up_gain]))
             finally:
                 self.model.endStrongbranch()
 
             if lperror:
                 return {"result": SCIP_RESULT.DIDNOTRUN}
 
-            best_i = max(eligible, key=lambda i: scores[i])
+            scored = [i for i in eligible if math.isfinite(scores[i])]
+            if not scored:
+                return {"result": SCIP_RESULT.DIDNOTRUN}
+            best_i = max(scored, key=lambda i: scores[i])
             chosen = cands[best_i]
             chosen_id = candidate_ids[best_i]
             chosen_sol = float(cand_sols[best_i])
+            candidate_scores = {candidate_ids[i]: float(scores[i]) for i in scored}
 
             try:
                 primal = float(self.model.getPrimalbound())
@@ -147,7 +152,15 @@ def collect_strong_branching_trajectory(
                 variable_ub={candidate_ids[i]: float(cands[i].getUbLocal()) for i in eligible},
                 branch_candidates={candidate_ids[i]: True for i in eligible},
             )
-            steps.append(BranchStep(state, chosen_id, chosen_sol, float(scores[best_i])))
+            steps.append(
+                BranchStep(
+                    state=state,
+                    chosen_variable=chosen_id,
+                    chosen_value=chosen_sol,
+                    score=float(scores[best_i]),
+                    candidate_scores=candidate_scores,
+                )
+            )
 
             down_child, eq_child, up_child = self.model.branchVarVal(chosen, chosen_sol)
             if self.model.allColsInLP():
