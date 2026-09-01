@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict, field
 from typing import List
 
 from .ir import OptimizationProblem
+from .lp_graph import SCIPLPGraphSnapshot
 from .state import SearchState
 
 
@@ -14,12 +15,15 @@ class BranchStep:
     chosen_value: float
     score: float
     candidate_scores: dict[str, float] = field(default_factory=dict)
+    lp_graph: SCIPLPGraphSnapshot | None = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "BranchStep":
+        raw_graph = data.get("lp_graph")
         return cls(
             state=SearchState.from_dict(data["state"]),
             chosen_variable=data["chosen_variable"],
@@ -29,6 +33,7 @@ class BranchStep:
                 str(variable_id): float(score)
                 for variable_id, score in data.get("candidate_scores", {}).items()
             },
+            lp_graph=SCIPLPGraphSnapshot.from_dict(raw_graph) if raw_graph is not None else None,
         )
 
 
