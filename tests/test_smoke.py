@@ -38,16 +38,31 @@ def test_default_model_is_roughly_30m():
 def test_dynamic_search_state_features():
     from gom.state import SearchState
     p = generate_knapsack(random.Random(5), 8)
-    st = SearchState(primal_bound=100, dual_bound=90, gap=0.1, depth=3, nodes=12, elapsed_s=0.5, variable_lp={"x0": 0.5}, variable_fractionality={"x0": 0.5}, branch_candidates={"x0": True})
+    st = SearchState(
+        primal_bound=100,
+        dual_bound=90,
+        gap=0.1,
+        depth=3,
+        nodes=12,
+        elapsed_s=0.5,
+        variable_lp={"x0": 0.5},
+        variable_fractionality={"x0": 0.5},
+        branch_candidates={"x0": True},
+        variable_reduced_cost={"x0": -3.0},
+        variable_pseudocost_down={"x0": 2.0},
+        variable_pseudocost_up={"x0": 4.0},
+    )
     g = featurize_problem(p, st)
-    assert g.x.shape[1] == 16
+    assert g.x.shape[1] == 19
     assert g.x[1, 14].item() == 1.0
+    assert g.x[1, 15].item() != 0.0
+    assert g.x[1, 16].item() != 0.0
+    assert g.x[1, 17].item() != 0.0
 
 
 def test_milp_coefficients_are_preserved_on_edges():
     p = generate_knapsack(random.Random(6), 6)
     g = featurize_problem(p)
-    # Knapsack has one constraint after the six variable nodes.
     constraint_index = 1 + len(p.variables)
     edge = g.edge_value[1, constraint_index]
     assert edge != 0
