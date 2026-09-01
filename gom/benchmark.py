@@ -86,6 +86,10 @@ def summarize_benchmark(rows: Sequence[dict], baseline_policy: str = "default") 
         decisions = [float(row.get("gom_decisions", 0) or 0) for row in selected]
         fallbacks = [float(row.get("gom_fallbacks", 0) or 0) for row in selected]
         inference = [float(row.get("gom_inference_ms", 0.0) or 0.0) for row in selected]
+        extract = [float(row.get("gom_extract_ms", 0.0) or 0.0) for row in selected]
+        tensor = [float(row.get("gom_tensor_ms", 0.0) or 0.0) for row in selected]
+        model = [float(row.get("gom_model_ms", 0.0) or 0.0) for row in selected]
+        total_decisions = sum(decisions)
         policies[policy] = {
             "runs": len(selected),
             "optimal": sum(str(row.get("status", "")).lower() == "optimal" for row in selected),
@@ -98,6 +102,10 @@ def summarize_benchmark(rows: Sequence[dict], baseline_policy: str = "default") 
             "mean_gom_decisions": _metric(decisions, mean),
             "mean_gom_fallbacks": _metric(fallbacks, mean),
             "mean_gom_inference_ms": _metric(inference, mean),
+            "gom_ms_per_decision": None if total_decisions <= 0 else sum(inference) / total_decisions,
+            "gom_extract_ms_per_decision": None if total_decisions <= 0 else sum(extract) / total_decisions,
+            "gom_tensor_ms_per_decision": None if total_decisions <= 0 else sum(tensor) / total_decisions,
+            "gom_model_ms_per_decision": None if total_decisions <= 0 else sum(model) / total_decisions,
         }
 
     paired: dict[str, dict] = {}
@@ -150,6 +158,27 @@ def render_markdown(summary: dict) -> str:
             f"{_fmt(stats['median_nodes'], 1)} | {_fmt(stats['mean_gom_decisions'], 1)} | "
             f"{_fmt(stats['mean_gom_fallbacks'], 1)} | {_fmt(stats['mean_gom_inference_ms'], 2)} |"
         )
+
+    latency_rows = [
+        (policy, stats)
+        for policy, stats in summary["policies"].items()
+        if stats.get("gom_ms_per_decision") is not None
+    ]
+    if latency_rows:
+        lines += [
+            "",
+            "## GOM branch latency",
+            "",
+            "| policy | total ms/decision | extract ms | tensor ms | model ms |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        for policy, stats in latency_rows:
+            lines.append(
+                f"| {policy} | {_fmt(stats['gom_ms_per_decision'], 3)} | "
+                f"{_fmt(stats['gom_extract_ms_per_decision'], 3)} | "
+                f"{_fmt(stats['gom_tensor_ms_per_decision'], 3)} | "
+                f"{_fmt(stats['gom_model_ms_per_decision'], 3)} |"
+            )
 
     lines += ["", f"## Paired vs `{summary['baseline']}`", "", "| policy | pairs | wins | ties | losses | win rate |", "|---|---:|---:|---:|---:|---:|"]
     for policy, stats in summary["paired"].items():
