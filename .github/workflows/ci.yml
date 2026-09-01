@@ -23,3 +23,5 @@ jobs:
         run: pytest -q
       - name: Tiny forward/training smoke test
         run: python scripts/train_synthetic.py --tiny --steps 1 --batch-size 2
+      - name: Experiment runner dry-run
+        run: python scripts/run_experiment.py --profile smoke --dry-run --run-dir /tmp/gom-ci-dry-run
