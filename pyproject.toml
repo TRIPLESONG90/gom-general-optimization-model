@@ -1,0 +1,18 @@
+[project]
+name = "gom-30m"
+version = "0.2.0"
+description = "General Optimization Model MVP: unified optimization IR + heterogeneous transformer + solver adapters"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.7",
+  "numpy>=2.0",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+solver = ["ortools>=9.12", "highspy>=1.10"]
+scip = ["pyscipopt>=6.0"]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
