@@ -8,7 +8,10 @@ GOM explores a **general optimization policy model** that learns how to control 
 - [x] Connect native-LP checkpoints to a live SCIP branch rule.
 - [x] Vectorize live edge tensorization and remove the generic copy pass.
 - [x] Validate native ranking distillation against top-1 imitation.
-- [ ] Scale trajectory collection and run the 64-problem research benchmark.
+- [x] Run 512-problem collection and 64-problem held-out benchmark.
+- [x] Record the always-invoke policy's negative result.
+- [ ] Add a cheap depth/node pre-gate before neural inference.
+- [ ] Predict candidate regret/advantage and intervene only on expected gain.
 
 ## v0.2 — executable research scaffold
 

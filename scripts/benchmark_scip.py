@@ -19,10 +19,11 @@ def main():
     p.add_argument("--device", default="cpu")
     p.add_argument("--gom-input", choices=("static", "lp"), default="static", help="GOM state representation")
     p.add_argument("--threads", type=int, default=1, help="CPU intra-op threads for native LP GOM")
+    p.add_argument("--gom-min-confidence", type=float, default=0.0, help="Abstain to SCIP default below this confidence")
     p.add_argument("--out", default="scip_benchmark.jsonl")
     args = p.parse_args()
 
-    gom_policy_name = "gom-lp" if args.gom_input == "lp" else "gom"
+    gom_policy_name = "gom-lp-hybrid" if args.gom_input == "lp" and args.gom_min_confidence > 0 else ("gom-lp" if args.gom_input == "lp" else "gom")
     rng = random.Random(args.seed)
     rows = []
     with open(args.out, "w", encoding="utf-8") as f:
@@ -44,6 +45,7 @@ def main():
                             time_limit_s=args.time_limit,
                             device=args.device,
                             threads=args.threads,
+                            min_confidence=args.gom_min_confidence,
                         )
                     else:
                         result = solve_with_gom_branching(
@@ -83,6 +85,7 @@ def main():
             "gom diagnostics",
             f"decisions={total_decisions}",
             f"fallbacks={sum(r['gom_fallbacks'] for r in gom)}",
+            f"abstentions={sum(r.get('gom_abstentions', 0) for r in gom)}",
             f"inference_ms={total_inference:.1f}",
             f"ms_per_decision={total_inference / max(1, total_decisions):.3f}",
         )
