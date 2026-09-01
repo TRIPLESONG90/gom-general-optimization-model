@@ -4,6 +4,7 @@ import math
 from typing import Any
 
 from ..ir import OptimizationProblem
+from ..lp_graph import SCIPLPGraphSnapshot
 from ..state import SearchState
 from ..trajectory import BranchStep, SolverTrajectory
 from .scip_mapping import build_transformed_variable_map, resolve_original_variable_id
@@ -18,14 +19,13 @@ def collect_strong_branching_trajectory(
 ) -> SolverTrajectory:
     """Run SCIP with a strong-branching teacher and record branch decisions.
 
-    This is intentionally expensive: it is a DATA GENERATOR, not the production
-    inference path. Each step retains the full set of finite strong-branch scores
-    so GOM can learn the candidate ranking instead of only the winning variable.
-
-    Requires PySCIPOpt 6.x / SCIP 10.x or another compatible pair.
+    In addition to the original Optimization IR state, each recorded step stores
+    SCIP's solver-native current LP bipartite graph. This captures presolved
+    columns, active rows/cuts, LP solution/reduced costs, basis information, and
+    the exact current coefficient matrix seen by the branching rule.
     """
     try:
-        from pyscipopt import Model, Branchrule, SCIP_RESULT, quicksum
+        from pyscipopt import Model, Branchrule, SCIP_RESULT, SCIP_BRANCHDIR, quicksum
     except ImportError as e:
         raise RuntimeError(
             "PySCIPOpt is optional. Install a SCIP-compatible PySCIPOpt build, "
@@ -55,6 +55,17 @@ def collect_strong_branching_trajectory(
     steps: list[BranchStep] = []
     transformed_map: dict[str, str] = {}
 
+    def safe_feature(fn, default: float = 0.0) -> float:
+        try:
+            value = float(fn())
+            return value if math.isfinite(value) else default
+        except Exception:
+            return default
+
+    def squash(value: float) -> float:
+        value = safe_feature(lambda: value)
+        return value / (1.0 + abs(value))
+
     class StrongBranchTeacher(Branchrule):
         def branchexeclp(self, allowaddcons):
             if len(steps) >= max_steps:
@@ -74,6 +85,35 @@ def collect_strong_branching_trajectory(
             eligible = list(candidate_ids)
             if not eligible:
                 return {"result": SCIP_RESULT.DIDNOTRUN}
+
+            # Capture the exact solver-native LP graph before strong branching.
+            col_features, edge_features, row_features, feature_map = self.model.getBipartiteGraphRepresentation(
+                suppress_warnings=True
+            )
+            candidate_columns: dict[str, int] = {}
+            for i in eligible:
+                col = cands[i].getCol()
+                if col is not None:
+                    lp_pos = int(col.getLPPos())
+                    if 0 <= lp_pos < len(col_features):
+                        candidate_columns[candidate_ids[i]] = lp_pos
+
+            reduced_cost = {
+                candidate_ids[i]: safe_feature(lambda i=i: self.model.getVarRedcost(cands[i]))
+                for i in eligible
+            }
+            pseudocost_down = {
+                candidate_ids[i]: safe_feature(
+                    lambda i=i: self.model.getVarPseudocost(cands[i], SCIP_BRANCHDIR.DOWNWARDS)
+                )
+                for i in eligible
+            }
+            pseudocost_up = {
+                candidate_ids[i]: safe_feature(
+                    lambda i=i: self.model.getVarPseudocost(cands[i], SCIP_BRANCHDIR.UPWARDS)
+                )
+                for i in eligible
+            }
 
             node_no = self.model.getNNodes()
             lp_obj = self.model.getLPObjVal()
@@ -124,33 +164,44 @@ def collect_strong_branching_trajectory(
             chosen_sol = float(cand_sols[best_i])
             candidate_scores = {candidate_ids[i]: float(scores[i]) for i in scored}
 
-            try:
-                primal = float(self.model.getPrimalbound())
-            except Exception:
-                primal = 0.0
-            try:
-                dual = float(self.model.getDualbound())
-            except Exception:
-                dual = float(lp_obj)
-            try:
-                gap = float(self.model.getGap())
-                if gap > 1e20:
-                    gap = 0.0
-            except Exception:
+            primal = safe_feature(self.model.getPrimalbound)
+            dual = safe_feature(self.model.getDualbound, float(lp_obj))
+            gap = safe_feature(self.model.getGap)
+            if gap > 1e20:
                 gap = 0.0
+            current = self.model.getCurrentNode()
+            depth = int(current.getDepth()) if current is not None else 0
+            nodes = int(self.model.getNNodes())
+            elapsed = float(self.model.getSolvingTime())
 
             state = SearchState(
                 primal_bound=primal,
                 dual_bound=dual,
                 gap=gap,
-                depth=int(self.model.getCurrentNode().getDepth()) if self.model.getCurrentNode() is not None else 0,
-                nodes=int(self.model.getNNodes()),
-                elapsed_s=float(self.model.getSolvingTime()),
+                depth=depth,
+                nodes=nodes,
+                elapsed_s=elapsed,
                 variable_lp={candidate_ids[i]: float(cand_sols[i]) for i in eligible},
                 variable_fractionality={candidate_ids[i]: float(cand_fracs[i]) for i in eligible},
                 variable_lb={candidate_ids[i]: float(cands[i].getLbLocal()) for i in eligible},
                 variable_ub={candidate_ids[i]: float(cands[i].getUbLocal()) for i in eligible},
                 branch_candidates={candidate_ids[i]: True for i in eligible},
+                variable_reduced_cost=reduced_cost,
+                variable_pseudocost_down=pseudocost_down,
+                variable_pseudocost_up=pseudocost_up,
+            )
+            lp_graph = SCIPLPGraphSnapshot(
+                col_features=[[float(x) for x in row] for row in col_features],
+                edge_features=[[float(x) for x in edge] for edge in edge_features],
+                row_features=[[float(x) for x in row] for row in row_features],
+                candidate_columns=candidate_columns,
+                feature_map={
+                    str(group): {str(name): int(index) for name, index in mapping.items()}
+                    for group, mapping in feature_map.items()
+                },
+                global_features=[
+                    squash(primal), squash(dual), squash(gap), squash(depth), squash(nodes), squash(elapsed)
+                ],
             )
             steps.append(
                 BranchStep(
@@ -159,6 +210,7 @@ def collect_strong_branching_trajectory(
                     chosen_value=chosen_sol,
                     score=float(scores[best_i]),
                     candidate_scores=candidate_scores,
+                    lp_graph=lp_graph,
                 )
             )
 

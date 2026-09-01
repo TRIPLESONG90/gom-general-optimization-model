@@ -1,0 +1,61 @@
+name: Branch Learning Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feature/v0.4-learning-diagnostics"
+    paths:
+      - "gom/**"
+      - "scripts/diagnose_branch_overfit.py"
+      - "scripts/diagnose_lp_graph_overfit.py"
+      - "scripts/diagnose_observability.py"
+      - ".github/workflows/learning-diagnostic.yml"
+      - "pyproject.toml"
+
+jobs:
+  overfit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install GOM + SCIP
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[scip,dev]'
+      - name: Collect fixed strong-branch states + native LP graphs
+        run: |
+          python scripts/collect_scip.py \
+            --count 4 \
+            --seed 41000 \
+            --time-limit 2 \
+            --max-steps 24 \
+            --out /tmp/diagnostic-trajectories.jsonl
+      - name: Observability collision diagnostic
+        run: |
+          python scripts/diagnose_observability.py \
+            /tmp/diagnostic-trajectories.jsonl \
+            --samples 24
+      - name: Native LP graph memorization diagnostic
+        run: |
+          python scripts/diagnose_lp_graph_overfit.py \
+            /tmp/diagnostic-trajectories.jsonl \
+            --samples 24 \
+            --steps 300 \
+            --lr 0.001 \
+            --ranking-weight 0.0 \
+            --threads 1 \
+            --require-top1 0.95
+      - name: Static IR state memorization reference
+        continue-on-error: true
+        run: |
+          python scripts/diagnose_branch_overfit.py \
+            /tmp/diagnostic-trajectories.jsonl \
+            --samples 24 \
+            --steps 300 \
+            --lr 0.001 \
+            --ranking-weight 0.0 \
+            --require-top1 0.95

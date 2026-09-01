@@ -25,6 +25,11 @@ class SearchState:
     variable_lb: Dict[str, float] = field(default_factory=dict)
     variable_ub: Dict[str, float] = field(default_factory=dict)
     branch_candidates: Dict[str, bool] = field(default_factory=dict)
+    # SCIP-specific dynamic LP/history signals. They remain optional so other
+    # solver adapters can leave them empty.
+    variable_reduced_cost: Dict[str, float] = field(default_factory=dict)
+    variable_pseudocost_down: Dict[str, float] = field(default_factory=dict)
+    variable_pseudocost_up: Dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)

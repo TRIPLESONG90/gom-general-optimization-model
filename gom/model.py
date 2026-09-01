@@ -33,9 +33,23 @@ class RelationAwareAttention(nn.Module):
         self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
         self.out = nn.Linear(d_model, d_model, bias=False)
         self.rel_bias = nn.Embedding(n_relations, n_heads)
+        # The original model knew only whether a VAR-CON edge existed. For MILP
+        # branching that throws away the coefficient matrix A. Feed signed and
+        # absolute normalized coefficients directly into each attention head.
+        self.edge_bias = nn.Sequential(
+            nn.Linear(2, n_heads),
+            nn.Tanh(),
+            nn.Linear(n_heads, n_heads, bias=False),
+        )
         self.dropout = dropout
 
-    def forward(self, x: torch.Tensor, relation: torch.Tensor, padding_mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        relation: torch.Tensor,
+        edge_value: torch.Tensor,
+        padding_mask: torch.Tensor,
+    ) -> torch.Tensor:
         b, n, d = x.shape
         qkv = self.qkv(x).view(b, n, 3, self.n_heads, self.head_dim)
         q, k, v = qkv.unbind(dim=2)
@@ -43,8 +57,10 @@ class RelationAwareAttention(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        bias = self.rel_bias(relation).permute(0, 3, 1, 2)
-        scores = scores + bias
+        relation_bias = self.rel_bias(relation).permute(0, 3, 1, 2)
+        edge_features = torch.stack((edge_value, edge_value.abs()), dim=-1)
+        coefficient_bias = self.edge_bias(edge_features).permute(0, 3, 1, 2)
+        scores = scores + relation_bias + coefficient_bias
         scores = scores.masked_fill(padding_mask[:, None, None, :], torch.finfo(scores.dtype).min)
         attn = F.softmax(scores, dim=-1)
         if self.dropout and self.training:
@@ -74,8 +90,14 @@ class GOMBlock(nn.Module):
         self.ff = SwiGLU(cfg.d_model, cfg.d_ff)
         self.dropout = cfg.dropout
 
-    def forward(self, x: torch.Tensor, relation: torch.Tensor, padding_mask: torch.Tensor) -> torch.Tensor:
-        h = self.attn(self.norm1(x), relation, padding_mask)
+    def forward(
+        self,
+        x: torch.Tensor,
+        relation: torch.Tensor,
+        edge_value: torch.Tensor,
+        padding_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        h = self.attn(self.norm1(x), relation, edge_value, padding_mask)
         x = x + (F.dropout(h, p=self.dropout, training=self.training) if self.dropout else h)
         h = self.ff(self.norm2(x))
         x = x + (F.dropout(h, p=self.dropout, training=self.training) if self.dropout else h)
@@ -96,14 +118,22 @@ class GOMModel(nn.Module):
         self.final_norm = nn.RMSNorm(cfg.d_model)
         self.solver_head = nn.Linear(cfg.d_model, cfg.n_solver_classes)
         self.action_head = nn.Linear(cfg.d_model, cfg.n_action_classes)
-        self.value_head = nn.Sequential(nn.Linear(cfg.d_model, cfg.d_model // 2), nn.SiLU(), nn.Linear(cfg.d_model // 2, cfg.value_dims))
-        self.variable_score = nn.Sequential(nn.Linear(cfg.d_model, cfg.d_model // 2), nn.SiLU(), nn.Linear(cfg.d_model // 2, 1))
+        self.value_head = nn.Sequential(
+            nn.Linear(cfg.d_model, cfg.d_model // 2),
+            nn.SiLU(),
+            nn.Linear(cfg.d_model // 2, cfg.value_dims),
+        )
+        self.variable_score = nn.Sequential(
+            nn.Linear(cfg.d_model, cfg.d_model // 2),
+            nn.SiLU(),
+            nn.Linear(cfg.d_model // 2, 1),
+        )
 
     def forward(self, batch: GraphBatch) -> dict[str, torch.Tensor]:
         x = self.input_proj(batch.x) + self.node_type_embedding(batch.node_type)
         x = x.masked_fill(batch.padding_mask.unsqueeze(-1), 0.0)
         for block in self.blocks:
-            x = block(x, batch.relation, batch.padding_mask)
+            x = block(x, batch.relation, batch.edge_value, batch.padding_mask)
         x = self.final_norm(x)
         global_state = x[:, 0]
         variable_logits = self.variable_score(x).squeeze(-1)

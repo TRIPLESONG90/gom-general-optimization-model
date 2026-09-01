@@ -1,5 +1,23 @@
 # GOM-30M — General Optimization Model
 
+## v0.5 native LP branching
+
+The live SCIP policy consumes SCIP's current bipartite LP graph (active columns,
+rows/cuts, coefficients, LP/basis features) instead of reconstructing solver
+state from the original static MILP. Live tensorization uses a vectorized
+single-snapshot path that avoids Python edge loops and generic batch padding.
+
+For native-LP training, ranking distillation is recommended:
+
+```bash
+python scripts/train_scip_lp_branch.py scip_trajectories.jsonl \
+  --ranking-weight 0.75 --ranking-temperature 1.0 \
+  --out gom_scip_lp_branch.pt
+
+python scripts/benchmark_scip.py \
+  --checkpoint gom_scip_lp_branch.pt --gom-input lp
+```
+
 GOM is a research scaffold for a **general optimization policy model**: a neural model that learns how to control mathematical optimization search instead of trying to replace classical solvers with one-shot prediction.
 
 ```text

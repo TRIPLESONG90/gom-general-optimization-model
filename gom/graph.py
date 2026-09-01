@@ -13,7 +13,7 @@ GLOBAL, VARIABLE, CONSTRAINT = 0, 1, 2
 NUM_NODE_TYPES = 3
 REL_NONE, REL_SELF, REL_GLOBAL, REL_VAR_CON = 0, 1, 2, 3
 NUM_RELATIONS = 4
-BASE_FEATURE_DIM = 16
+BASE_FEATURE_DIM = 19
 
 
 @dataclass
@@ -21,6 +21,7 @@ class ProblemGraph:
     x: torch.Tensor
     node_type: torch.Tensor
     relation: torch.Tensor
+    edge_value: torch.Tensor
     variable_mask: torch.Tensor
     problem_type: str
 
@@ -30,16 +31,24 @@ class GraphBatch:
     x: torch.Tensor
     node_type: torch.Tensor
     relation: torch.Tensor
+    edge_value: torch.Tensor
     padding_mask: torch.Tensor
     variable_mask: torch.Tensor
     problem_types: List[str]
 
     def to(self, device: torch.device | str) -> "GraphBatch":
-        return GraphBatch(x=self.x.to(device), node_type=self.node_type.to(device), relation=self.relation.to(device), padding_mask=self.padding_mask.to(device), variable_mask=self.variable_mask.to(device), problem_types=self.problem_types)
+        return GraphBatch(
+            x=self.x.to(device),
+            node_type=self.node_type.to(device),
+            relation=self.relation.to(device),
+            edge_value=self.edge_value.to(device),
+            padding_mask=self.padding_mask.to(device),
+            variable_mask=self.variable_mask.to(device),
+            problem_types=self.problem_types,
+        )
 
 
 def _safe_scale(v: float) -> float:
-    # Solver bounds can legitimately be +/-inf before an incumbent/bound exists.
     v = float(v)
     if not math.isfinite(v):
         return 0.0
@@ -54,6 +63,7 @@ def featurize_problem(problem: OptimizationProblem, state: SearchState | None = 
     x = torch.zeros(n, BASE_FEATURE_DIM, dtype=torch.float32)
     node_type = torch.empty(n, dtype=torch.long)
     relation = torch.zeros(n, n, dtype=torch.long)
+    edge_value = torch.zeros(n, n, dtype=torch.float32)
     variable_mask = torch.zeros(n, dtype=torch.bool)
     node_type[0] = GLOBAL
     x[0, 0] = 1.0 if problem.sense == "max" else -1.0
@@ -84,6 +94,9 @@ def featurize_problem(problem: OptimizationProblem, state: SearchState | None = 
             x[i, 12] = _safe_scale(state.variable_lb.get(var.id, var.lb))
             x[i, 13] = _safe_scale(state.variable_ub.get(var.id, var.ub))
             x[i, 14] = 1.0 if state.branch_candidates.get(var.id, False) else 0.0
+            x[i, 15] = _safe_scale(state.variable_reduced_cost.get(var.id, 0.0))
+            x[i, 16] = _safe_scale(state.variable_pseudocost_down.get(var.id, 0.0))
+            x[i, 17] = _safe_scale(state.variable_pseudocost_up.get(var.id, 0.0))
     for j, con in enumerate(problem.constraints):
         idx = 1 + n_var + j
         node_type[idx] = CONSTRAINT
@@ -103,13 +116,23 @@ def featurize_problem(problem: OptimizationProblem, state: SearchState | None = 
             x[vi, 8] += 1.0
             relation[vi, idx] = REL_VAR_CON
             relation[idx, vi] = REL_VAR_CON
+            scaled_coeff = _safe_scale(coeff)
+            edge_value[vi, idx] = scaled_coeff
+            edge_value[idx, vi] = scaled_coeff
     if n_con:
         x[1:1 + n_var, 8] /= max(1, n_con)
     relation[0, :] = REL_GLOBAL
     relation[:, 0] = REL_GLOBAL
     for i in range(n):
         relation[i, i] = REL_SELF
-    return ProblemGraph(x=x, node_type=node_type, relation=relation, variable_mask=variable_mask, problem_type=problem.problem_type)
+    return ProblemGraph(
+        x=x,
+        node_type=node_type,
+        relation=relation,
+        edge_value=edge_value,
+        variable_mask=variable_mask,
+        problem_type=problem.problem_type,
+    )
 
 
 def collate_graphs(graphs: list[ProblemGraph]) -> GraphBatch:
@@ -121,6 +144,7 @@ def collate_graphs(graphs: list[ProblemGraph]) -> GraphBatch:
     x = torch.zeros(b, max_n, feat, dtype=torch.float32)
     node_type = torch.zeros(b, max_n, dtype=torch.long)
     relation = torch.zeros(b, max_n, max_n, dtype=torch.long)
+    edge_value = torch.zeros(b, max_n, max_n, dtype=torch.float32)
     padding_mask = torch.ones(b, max_n, dtype=torch.bool)
     variable_mask = torch.zeros(b, max_n, dtype=torch.bool)
     for bi, g in enumerate(graphs):
@@ -128,6 +152,15 @@ def collate_graphs(graphs: list[ProblemGraph]) -> GraphBatch:
         x[bi, :n] = g.x
         node_type[bi, :n] = g.node_type
         relation[bi, :n, :n] = g.relation
+        edge_value[bi, :n, :n] = g.edge_value
         padding_mask[bi, :n] = False
         variable_mask[bi, :n] = g.variable_mask
-    return GraphBatch(x=x, node_type=node_type, relation=relation, padding_mask=padding_mask, variable_mask=variable_mask, problem_types=[g.problem_type for g in graphs])
+    return GraphBatch(
+        x=x,
+        node_type=node_type,
+        relation=relation,
+        edge_value=edge_value,
+        padding_mask=padding_mask,
+        variable_mask=variable_mask,
+        problem_types=[g.problem_type for g in graphs],
+    )
