@@ -1,0 +1,49 @@
+name: SCIP E2E Smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "gom/**"
+      - "scripts/**"
+      - "experiments/**"
+      - "pyproject.toml"
+      - ".github/workflows/scip-smoke.yml"
+  push:
+    branches:
+      - "ci/scip-end-to-end-smoke"
+
+jobs:
+  scip-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install GOM + SCIP
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[scip,dev]'
+          python - <<'PY'
+          import pyscipopt
+          print("PySCIPOpt", pyscipopt.__version__)
+          PY
+      - name: Run end-to-end smoke experiment
+        run: |
+          python scripts/run_experiment.py \
+            --profile smoke \
+            --run-dir /tmp/gom-scip-smoke
+          cat /tmp/gom-scip-smoke/REPORT.md
+      - name: Upload smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scip-smoke-report
+          path: |
+            /tmp/gom-scip-smoke/manifest.json
+            /tmp/gom-scip-smoke/benchmark.jsonl
+            /tmp/gom-scip-smoke/summary.json
+            /tmp/gom-scip-smoke/REPORT.md
+          if-no-files-found: warn
