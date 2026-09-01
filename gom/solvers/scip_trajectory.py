@@ -5,6 +5,7 @@ from typing import Any
 from ..ir import OptimizationProblem
 from ..state import SearchState
 from ..trajectory import BranchStep, SolverTrajectory
+from .scip_mapping import build_transformed_variable_map, resolve_original_variable_id
 
 
 def collect_strong_branching_trajectory(
@@ -51,6 +52,7 @@ def collect_strong_branching_trajectory(
 
     scip.setMinimize() if problem.sense == "min" else scip.setMaximize()
     steps: list[BranchStep] = []
+    transformed_map: dict[str, str] = {}
 
     class StrongBranchTeacher(Branchrule):
         def branchexeclp(self, allowaddcons):
@@ -59,6 +61,17 @@ def collect_strong_branching_trajectory(
 
             cands, cand_sols, cand_fracs, ncands, nprio, nimpl = self.model.getLPBranchCands()
             if nprio <= 0:
+                return {"result": SCIP_RESULT.DIDNOTRUN}
+
+            if not transformed_map:
+                transformed_map.update(build_transformed_variable_map(self.model, var_map))
+            candidate_ids = {
+                i: original_id
+                for i in range(nprio)
+                if (original_id := resolve_original_variable_id(cands[i], transformed_map, var_map)) is not None
+            }
+            eligible = list(candidate_ids)
+            if not eligible:
                 return {"result": SCIP_RESULT.DIDNOTRUN}
 
             node_no = self.model.getNNodes()
@@ -70,7 +83,7 @@ def collect_strong_branching_trajectory(
 
             self.model.startStrongbranch()
             try:
-                for i in range(nprio):
+                for i in eligible:
                     cand = cands[i]
                     if self.model.getVarStrongbranchNode(cand) == node_no:
                         down, up, downvalid, upvalid, _, last_lp = self.model.getVarStrongbranchLast(cand)
@@ -101,8 +114,9 @@ def collect_strong_branching_trajectory(
             if lperror:
                 return {"result": SCIP_RESULT.DIDNOTRUN}
 
-            best_i = max(range(nprio), key=lambda i: scores[i])
+            best_i = max(eligible, key=lambda i: scores[i])
             chosen = cands[best_i]
+            chosen_id = candidate_ids[best_i]
             chosen_sol = float(cand_sols[best_i])
 
             try:
@@ -127,13 +141,13 @@ def collect_strong_branching_trajectory(
                 depth=int(self.model.getCurrentNode().getDepth()) if self.model.getCurrentNode() is not None else 0,
                 nodes=int(self.model.getNNodes()),
                 elapsed_s=float(self.model.getSolvingTime()),
-                variable_lp={c.name: float(s) for c, s in zip(cands[:nprio], cand_sols[:nprio])},
-                variable_fractionality={c.name: float(f) for c, f in zip(cands[:nprio], cand_fracs[:nprio])},
-                variable_lb={c.name: float(c.getLbLocal()) for c in cands[:nprio]},
-                variable_ub={c.name: float(c.getUbLocal()) for c in cands[:nprio]},
-                branch_candidates={c.name: True for c in cands[:nprio]},
+                variable_lp={candidate_ids[i]: float(cand_sols[i]) for i in eligible},
+                variable_fractionality={candidate_ids[i]: float(cand_fracs[i]) for i in eligible},
+                variable_lb={candidate_ids[i]: float(cands[i].getLbLocal()) for i in eligible},
+                variable_ub={candidate_ids[i]: float(cands[i].getUbLocal()) for i in eligible},
+                branch_candidates={candidate_ids[i]: True for i in eligible},
             )
-            steps.append(BranchStep(state, chosen.name, chosen_sol, float(scores[best_i])))
+            steps.append(BranchStep(state, chosen_id, chosen_sol, float(scores[best_i])))
 
             down_child, eq_child, up_child = self.model.branchVarVal(chosen, chosen_sol)
             if self.model.allColsInLP():
