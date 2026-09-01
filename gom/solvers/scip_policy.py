@@ -158,7 +158,7 @@ def predict_branch_variable(
     for var_id in known:
         candidate_mask[0, 1 + variable_ids.index(var_id)] = True
 
-    with torch.no_grad():
+    with torch.inference_mode():
         output = model(batch)
         logits = masked_branch_logits(output["variable_logits"], candidate_mask)
         probs = torch.softmax(logits, dim=-1)
@@ -179,10 +179,22 @@ def solve_with_gom_branching(
     priority: int = 10_000_000,
 ) -> SCIPRunResult:
     Branchrule, _, SCIP_RESULT, _ = _import_scip()
+    try:
+        from pyscipopt import SCIP_BRANCHDIR
+    except ImportError as exc:
+        raise RuntimeError("PySCIPOpt SCIP_BRANCHDIR is required") from exc
+
     scip, var_map = _build_model(problem, time_limit_s)
     gom = load_gom_checkpoint(checkpoint, device)
     stats = {"decisions": 0, "fallbacks": 0, "inference_ms": 0.0}
     transformed_map: dict[str, str] = {}
+
+    def safe_feature(fn, default: float = 0.0) -> float:
+        try:
+            value = float(fn())
+            return value if math.isfinite(value) else default
+        except Exception:
+            return default
 
     class GOMBranchRule(Branchrule):
         def branchexeclp(self, allowaddcons):
@@ -234,6 +246,22 @@ def solve_with_gom_branching(
                     variable_lb={original_id: float(cand.getLbLocal()) for original_id, cand, _, _ in resolved},
                     variable_ub={original_id: float(cand.getUbLocal()) for original_id, cand, _, _ in resolved},
                     branch_candidates={original_id: True for original_id, _, _, _ in resolved},
+                    variable_reduced_cost={
+                        original_id: safe_feature(lambda cand=cand: self.model.getVarRedcost(cand))
+                        for original_id, cand, _, _ in resolved
+                    },
+                    variable_pseudocost_down={
+                        original_id: safe_feature(
+                            lambda cand=cand: self.model.getVarPseudocost(cand, SCIP_BRANCHDIR.DOWNWARDS)
+                        )
+                        for original_id, cand, _, _ in resolved
+                    },
+                    variable_pseudocost_up={
+                        original_id: safe_feature(
+                            lambda cand=cand: self.model.getVarPseudocost(cand, SCIP_BRANCHDIR.UPWARDS)
+                        )
+                        for original_id, cand, _, _ in resolved
+                    },
                 )
 
                 start = time.perf_counter()
