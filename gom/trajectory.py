@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import List
 
 from .ir import OptimizationProblem
@@ -13,6 +13,7 @@ class BranchStep:
     chosen_variable: str
     chosen_value: float
     score: float
+    candidate_scores: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -24,6 +25,10 @@ class BranchStep:
             chosen_variable=data["chosen_variable"],
             chosen_value=float(data.get("chosen_value", 0.0)),
             score=float(data.get("score", 0.0)),
+            candidate_scores={
+                str(variable_id): float(score)
+                for variable_id, score in data.get("candidate_scores", {}).items()
+            },
         )
 
 
